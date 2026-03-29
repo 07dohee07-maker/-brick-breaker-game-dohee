@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>아빠 힘내! 도희가 ❤️</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Nanum+Pen+Script&display=swap');
+
+        :root {
+            --bg-color: #fff9fb;
+            --primary: #ffb7b2;
+            --secondary: #b5ead7;
+            --text: #6d5d6e;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg-color);
+            font-family: 'Nanum Pen Script', cursive;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            touch-action: none; /* 화면 스크롤 방지 (게임 집중) */
+            overflow: hidden;
+            color: var(--text);
+        }
+
+        #game-container {
+            position: relative;
+            margin-top: 10px;
+            width: 100%;
+            max-width: 480px;
+        }
+
+        canvas {
+            background: #fff;
+            border: 5px solid var(--primary);
+            border-radius: 20px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+            display: block;
+            width: 100%; /* 모바일 대응 */
+            height: auto;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.98);
+            padding: 20px;
+            border-radius: 25px;
+            text-align: center;
+            width: 80%;
+            z-index: 10;
+            border: 3px dashed var(--primary);
+        }
+
+        h1 { color: var(--primary); font-size: 2rem; margin: 10px 0; }
+        
+        input {
+            padding: 10px;
+            width: 80%;
+            border: 2px solid #ffd1dc;
+            border-radius: 12px;
+            font-family: inherit;
+            font-size: 1.4rem;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        button {
+            padding: 8px 25px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 1.6rem;
+            font-family: inherit;
+        }
+
+        #rank-box {
+            text-align: left;
+            font-size: 1.1rem;
+            max-height: 120px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+
+        .rank-item { display: flex; justify-content: space-between; padding: 3px 5px; border-bottom: 1px solid #eee; }
+
+        .guide-text {
+            font-size: 1.2rem;
+            color: #aaa;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div style="font-size: 1.8rem; margin-top: 15px;">아빠 힘내! 도희가 ❤️</div>
+
+    <div id="game-container">
+        <div id="login-ui" class="overlay">
+            <h1>응원 로그인</h1>
+            <p>아빠 이름을 적어주세요!</p>
+            <input type="text" id="playerName" placeholder="우리 아빠" maxlength="8">
+            <br>
+            <button onclick="startApp()">게임 시작!</button>
+        </div>
+
+        <canvas id="gameCanvas" width="480" height="320"></canvas>
+
+        <div id="result-ui" class="overlay" style="display: none;">
+            <h1 id="result-msg">최고예요!</h1>
+            <p>점수: <span id="finalScore">0</span>점</p>
+            <hr>
+            <div id="rank-box"></div>
+            <button onclick="location.reload()">다시 하기</button>
+        </div>
+    </div>
+
+    <p class="guide-text">컴퓨터는 화살표, 모바일은 화면 양쪽을 터치하세요!</p>
+
+    <script>
+        // --- [Firebase 설정] ---
+         const firebaseConfig = {
+          apiKey: "AIzaSyDJZEH7lq3AL818eU31rGSUf3uFIcSt1cE",
+  authDomain: "dohee-father.firebaseapp.com",
+  databaseURL: "https://dohee-father-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "dohee-father",
+  storageBucket: "dohee-father.firebasestorage.app",
+  messagingSenderId: "1082862450001",
+  appId: "1:1082862450001:web:219220d546bc76b1954f70",
+  measurementId: "G-RGXT7NQL0M"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        let score = 0, pName = "", isRunning = false;
+
+        let x = canvas.width/2, y = canvas.height-30;
+        let dx = 3, dy = -3;
+        const ballRadius = 8;
+        const paddleWidth = 90, paddleHeight = 15;
+        let paddleX = (canvas.width - paddleWidth)/2;
+        let rightPressed = false, leftPressed = false;
+
+        // 벽돌
+        const rows = 4, cols = 5, bW = 75, bH = 20, bPad = 10, bOffT = 40, bOffL = 35;
+        let bricks = [];
+        for(let c=0; c<cols; c++) {
+            bricks[c] = [];
+            for(let r=0; r<rows; r++) bricks[c][r] = { x: 0, y: 0, status: 1 };
+        }
+
+        // --- [컨트롤: 키보드 + 터치] ---
+        document.addEventListener("keydown", (e) => {
+            if(e.key == "Right" || e.key == "ArrowRight") rightPressed = true;
+            if(e.key == "Left" || e.key == "ArrowLeft") leftPressed = true;
+        });
+        document.addEventListener("keyup", (e) => {
+            if(e.key == "Right" || e.key == "ArrowRight") rightPressed = false;
+            if(e.key == "Left" || e.key == "ArrowLeft") leftPressed = false;
+        });
+
+        // 모바일 터치 조작 (화면 왼쪽/오른쪽 절반 기준)
+        canvas.addEventListener("touchstart", (e) => {
+            const touchX = e.touches[0].clientX;
+            if(touchX > window.innerWidth / 2) rightPressed = true;
+            else leftPressed = true;
+        }, false);
+        canvas.addEventListener("touchend", () => {
+            rightPressed = false; leftPressed = false;
+        }, false);
+
+        function startApp() {
+            pName = document.getElementById("playerName").value.trim();
+            if(!pName) return alert("이름을 적어주세요!");
+            document.getElementById("login-ui").style.display = "none";
+            isRunning = true; draw();
+        }
+
+        function drawBall() {
+            ctx.beginPath(); ctx.arc(x, y, ballRadius, 0, Math.PI*2);
+            ctx.fillStyle = "#ffb7b2"; ctx.fill(); ctx.closePath();
+        }
+
+        function drawPaddle() {
+            ctx.beginPath(); ctx.roundRect(paddleX, canvas.height-paddleHeight-5, paddleWidth, paddleHeight, 8);
+            ctx.fillStyle = "#b5ead7"; ctx.fill(); ctx.closePath();
+        }
+
+        function drawBricks() {
+            for(let c=0; c<cols; c++) {
+                for(let r=0; r<rows; r++) {
+                    if(bricks[c][r].status == 1) {
+                        let bx = (c*(bW+bPad))+bOffL, by = (r*(bH+bPad))+bOffT;
+                        bricks[c][r].x = bx; bricks[c][r].y = by;
+                        ctx.beginPath(); ctx.roundRect(bx, by, bW, bH, 5);
+                        ctx.fillStyle = (r%2==0)?"#ffdac1":"#e2f0cb";
+                        ctx.fill(); ctx.closePath();
+                    }
+                }
+            }
+        }
+
+        function collision() {
+            for(let c=0; c<cols; c++) {
+                for(let r=0; r<rows; r++) {
+                    let b = bricks[c][r];
+                    if(b.status == 1) {
+                        if(x > b.x && x < b.x+bW && y > b.y && y < b.y+bH) {
+                            dy = -dy; b.status = 0; score += 10;
+                            if(score == rows*cols*10) endGame("승리! 도희가 아빠 짱! ❤️");
+                        }
+                    }
+                }
+            }
+        }
+
+        function endGame(msg) {
+            isRunning = false;
+            document.getElementById("result-msg").innerText = msg;
+            document.getElementById("finalScore").innerText = score;
+            document.getElementById("result-ui").style.display = "block";
+            database.ref('ranking/').push({ name: pName, score: score });
+            showRank();
+        }
+
+        function showRank() {
+            database.ref('ranking/').orderByChild('score').limitToLast(10).on('value', (s) => {
+                const box = document.getElementById("rank-box"); box.innerHTML = "";
+                let a = []; s.forEach(c => a.push(c.val()));
+                a.reverse().forEach((it, i) => {
+                    box.innerHTML += `<div class="rank-item"><span>${i+1}. ${it.name}</span><strong>${it.score}점</strong></div>`;
+                });
+            });
+        }
+
+        function draw() {
+            if(!isRunning) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBricks(); drawBall(); drawPaddle(); collision();
+            if(x+dx > canvas.width-ballRadius || x+dx < ballRadius) dx = -dx;
+            if(y+dy < ballRadius) dy = -dy;
+            else if(y+dy > canvas.height-ballRadius-5) {
+                if(x > paddleX && x < paddleX+paddleWidth) dy = -dy;
+                else { endGame("아빠 힘내세요! 다음에 또 해요!"); return; }
+            }
+            if(rightPressed && paddleX < canvas.width-paddleWidth) paddleX += 7;
+            if(leftPressed && paddleX > 0) paddleX -= 7;
+            x += dx; y += dy;
+            requestAnimationFrame(draw);
+        }
+    </script>
+</body>
+</html>
